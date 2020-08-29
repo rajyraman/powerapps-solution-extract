@@ -1,0 +1,117 @@
+name: powerappssolutionextract
+description: "Extract Solution Components from Power Apps Solution and commit into repo. Release solution (optionally)"
+
+inputs:
+  token:
+    description: "GitHub Token"
+    required: true
+  solutionName:
+    description: "Solution Name"
+    required: true
+  sourceEnvironmentUrl:
+    description: "Source Environment URL"
+    required: true
+  applicationId:
+    description: "Application Id"
+    required: true
+  applicationSecret:
+    description: "Application Secret"
+    required: true
+  releaseSolution:
+    description: "Release Solution?"
+    required: true
+    default: 'false'
+    
+outputs:
+  solutionVersion:
+    description: "Solution Version"
+    value: ${{ steps.extract-solution-components.outputs.solutionVersion }}
+runs:
+  using: composite
+
+  steps:
+    - run: echo "::set-env name=GIT_REDIRECT_STDERR::2>&1"
+      shell: powershell
+      
+    - id: set-params
+      run: echo "::set-output name=connectionString::AuthType=ClientSecret;Url=${{ inputs.sourceEnvironmentUrl }};ApplicationId=${{ inputs.applicationId }};Secret=${{ inputs.applicationSecret }}"
+      shell: powershell
+      
+    - name: Install CDS Core Tools
+      shell: powershell
+      run: |
+        $sourceNugetExe = "https://dist.nuget.org/win-x86-commandline/latest/nuget.exe"
+        $targetNugetExe = ".\nuget.exe"
+        Remove-Item .\Tools -Force -Recurse -ErrorAction Ignore
+        Invoke-WebRequest $sourceNugetExe -OutFile $targetNugetExe
+        Set-Alias nuget $targetNugetExe -Scope Global -Verbose
+
+        ./nuget install Microsoft.CrmSdk.CoreTools
+        move .\Microsoft.CrmSdk.CoreTools*\content\bin\* .\coretools -Force
+        Remove-Item -Recurse -Force Microsoft.CrmSdk.CoreTools*
+
+    - name: Extract Solution Components
+      id: extract-solution-components
+      shell: powershell
+      run: |
+        Install-Module -Name Xrm.Framework.CI.PowerShell.Cmdlets -Confirm:$false -Verbose -Force
+        $version = "$(Get-Date -Format "yyyy.MM.dd").${{ github.run_number }}";
+        
+        echo "::set-output name=solutionVersion::$version"
+        echo "::set-output name=solutionFileNameWithVersion::${{ inputs.solutionName }}_$($version -replace "\.", '_')"
+        
+        Write-Host "****...Setting Version to ${version}...****"
+        Set-XrmSolutionVersion -ConnectionString "${{ steps.set-params.outputs.connectionString }}" -SolutionName ${{ inputs.solutionName }} -Version "$(Get-Date -Format "yyyy.MM.dd").${{ github.run_number }}"
+
+        Write-Host "****...Exporting Unmanaged solution...****"
+        Export-XrmSolution -ConnectionString "${{ steps.set-params.outputs.connectionString }}" -Managed $false -UniqueSolutionName ${{ inputs.solutionName }} -OutputFolder . -Verbose
+
+        Write-Host "****...Exporting Managed solution...****"
+        Export-XrmSolution -ConnectionString "${{ steps.set-params.outputs.connectionString }}" -Managed $true -UniqueSolutionName ${{ inputs.solutionName }} -OutputFolder . -Verbose
+
+        Write-Host "****...Extract solution files...****"
+        Expand-XrmSolution -Folder "${{ github.workspace }}\Solution\${{ inputs.solutionName }}" -PackageType Both -SolutionFile ${{ inputs.solutionName }}.zip -SolutionPackagerPath "${{ github.workspace }}\coretools\SolutionPackager.exe"  -Verbose
+
+    - name: Cleanup and Commit Solution
+      shell: powershell
+      run: |
+        Write-Host "****...Delete files...****"
+        Remove-Item ${{ inputs.solutionName }}.zip -force
+        Remove-Item ${{ inputs.solutionName }}_managed.zip -force
+        Remove-Item nuget.exe -force
+
+        Write-Host "****...Push code to repo...****"
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add --all
+        git tag ${{ steps.extract-solution-components.outputs.solutionVersion }} -f
+        git commit -m "Add solution changes"
+        git  -c http.extraheader="AUTHORIZATION: Bearer ${{ inputs.token }}" push origin master
+        
+    - name: Pack Solution
+      shell: powershell
+      run: |
+        if('${{ inputs.releaseSolution }}' -eq 'true') {
+          Write-Host "****...Pack solution files...****"
+          Compress-XrmSolution -Folder "${{ github.workspace }}\Solution\${{ github.event.inputs.solutionName }}" -OutputFolder "${{ github.workspace }}\output" -PackageType Both -SolutionPackagerPath "${{ github.workspace }}\coretools\SolutionPackager.exe" -IncludeVersionInName $true -IncrementReleaseVersion $false -Verbose
+        }
+        
+    - name: Release Solution
+      id: release-solution
+      shell: powershell
+      run: |
+        if('${{ inputs.releaseSolution }}' -eq 'true') {
+          Install-Module -Name PowerShellForGitHub -Confirm:$false -Verbose -Force
+          
+          $tokenEncrypted = ConvertTo-SecureString -String ${{ inputs.token }} -AsPlainText -Force
+          $cred = New-Object System.Management.Automation.PSCredential "ignore", $tokenEncrypted
+          Set-GitHubAuthentication -Credential $cred          
+
+          Set-GitHubConfiguration -DefaultOwnerName ${{ github.repository_owner }}
+          Set-GitHubConfiguration -DefaultRepositoryName $('${{ github.repository }}' -replace '${{ github.repository_owner }}/', '')
+          Set-GitHubConfiguration -DisableTelemetry -LogRequestBody
+          
+          $release = New-GitHubRelease -Tag ${{ steps.extract-solution-components.outputs.solutionVersion }} -Name ${{ steps.extract-solution-components.outputs.solutionFileNameWithVersion }} -Verbose
+          $release | New-GitHubReleaseAsset -Path ${{ github.workspace }}\output\${{ steps.extract-solution-components.outputs.solutionFileNameWithVersion }}_managed.zip -Verbose
+          $release | New-GitHubReleaseAsset -Path ${{ github.workspace }}\output\${{ steps.extract-solution-components.outputs.solutionFileNameWithVersion }}.zip -Verbose
+        }
