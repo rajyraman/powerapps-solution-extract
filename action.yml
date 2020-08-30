@@ -1,6 +1,9 @@
-name: powerappssolutionextract
+name: powerapps-solution-extract
+author: Natraj Yegnaraman
 description: "Extract Solution Components from Power Apps Solution and commit into repo. Release solution (optionally)"
-
+branding:
+  icon: "zap"
+  color: "blue"
 inputs:
   token:
     description: "GitHub Token"
@@ -20,8 +23,8 @@ inputs:
   releaseSolution:
     description: "Release Solution?"
     required: true
-    default: 'false'
-    
+    default: "false"
+
 outputs:
   solutionVersion:
     description: "Solution Version"
@@ -32,11 +35,11 @@ runs:
   steps:
     - run: echo "::set-env name=GIT_REDIRECT_STDERR::2>&1"
       shell: powershell
-      
+
     - id: set-params
       run: echo "::set-output name=connectionString::AuthType=ClientSecret;Url=${{ inputs.sourceEnvironmentUrl }};ApplicationId=${{ inputs.applicationId }};Secret=${{ inputs.applicationSecret }}"
       shell: powershell
-      
+
     - name: Install CDS Core Tools
       shell: powershell
       run: |
@@ -56,10 +59,10 @@ runs:
       run: |
         Install-Module -Name Xrm.Framework.CI.PowerShell.Cmdlets -Confirm:$false -Verbose -Force
         $version = "$(Get-Date -Format "yyyy.MM.dd").${{ github.run_number }}";
-        
+
         echo "::set-output name=solutionVersion::$version"
         echo "::set-output name=solutionFileNameWithVersion::${{ inputs.solutionName }}_$($version -replace "\.", '_')"
-        
+
         Write-Host "****...Setting Version to ${version}...****"
         Set-XrmSolutionVersion -ConnectionString "${{ steps.set-params.outputs.connectionString }}" -SolutionName ${{ inputs.solutionName }} -Version "$(Get-Date -Format "yyyy.MM.dd").${{ github.run_number }}"
 
@@ -87,7 +90,7 @@ runs:
         git tag ${{ steps.extract-solution-components.outputs.solutionVersion }} -f
         git commit -m "Add solution changes"
         git  -c http.extraheader="AUTHORIZATION: Bearer ${{ inputs.token }}" push origin master
-        
+
     - name: Pack Solution
       shell: powershell
       run: |
@@ -95,7 +98,7 @@ runs:
           Write-Host "****...Pack solution files...****"
           Compress-XrmSolution -Folder "${{ github.workspace }}\Solution\${{ github.event.inputs.solutionName }}" -OutputFolder "${{ github.workspace }}\output" -PackageType Both -SolutionPackagerPath "${{ github.workspace }}\coretools\SolutionPackager.exe" -IncludeVersionInName $true -IncrementReleaseVersion $false -Verbose
         }
-        
+
     - name: Release Solution
       id: release-solution
       shell: powershell
