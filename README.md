@@ -73,7 +73,7 @@ jobs:
 
       - name: Extract Solution
         id: extract-solution
-        uses: rajyraman/powerapps-solution-extract@v1.1
+        uses: rajyraman/powerapps-solution-extract@v1.3
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           solutionName: ${{ github.event.inputs.solutionName }}
