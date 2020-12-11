@@ -22,8 +22,12 @@ inputs:
     required: true
   releaseSolution:
     description: "Release Solution?"
-    required: true
+    required: false
     default: "false"
+  branch:
+    description: "Branch name to commit the changes to"
+    required: false
+    default: "main"
 
 outputs:
   solutionVersion:
@@ -89,7 +93,7 @@ runs:
         git add --all
         git tag ${{ steps.extract-solution-components.outputs.solutionVersion }} -f
         git commit -m "Add solution changes"
-        git  -c http.extraheader="AUTHORIZATION: Bearer ${{ inputs.token }}" push origin master
+        git  -c http.extraheader="AUTHORIZATION: Bearer ${{ inputs.token }}" push origin ${{ inputs.branch }}
 
     - name: Pack Solution
       shell: powershell
